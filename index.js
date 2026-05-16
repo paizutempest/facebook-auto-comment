@@ -1,176 +1,145 @@
-const express = require("express");
-const axios = require("axios");
+const { chromium } = require('playwright');
+const { GoogleGenAI } = require('@google/genai');
+const fs = require('fs');
+const path = require('path');
 
-const app = express();
-app.use(express.json());
+// =========================================================================
+// CONFIGURATION (Taruh data lo di sini, ga usah pake .env)
+// =========================================================================
+const GEMINI_API_KEY = "TARUH_API_KEY_GEMINI_LO_DI_SINI"; 
 
-// ========================
-// CONFIG — set these as
-// Environment Variables
-// on Render (never hardcode)
-// ========================
-const CONFIG = {
-  VERIFY_TOKEN:       process.env.VERIFY_TOKEN || "my_verify_token",
-  PAGE_ACCESS_TOKEN:  process.env.PAGE_ACCESS_TOKEN || "",
-  ANTHROPIC_API_KEY:  process.env.ANTHROPIC_API_KEY || "",
+// Konfigurasi Akun & Session
+const AKUN_SEKARANG = "akun_1"; // Ganti namanya kalau mau pake akun berbeda (misal: akun_2)
+const SESSION_FILE = path.join(__dirname, `session_${AKUN_SEKARANG}.json`);
 
-  // The AI personality — customize this!
-  BOT_PERSONA: process.env.BOT_PERSONA ||
-    `You are a warm, friendly, and helpful Facebook Page assistant.
+// Link Shopee Affiliate Induk lo
+const LINK_AFFILIATE = "https://shope.ee/xxxxxx"; 
+const KEYWORD_CARI = "nyari hp cianjur";
+// =========================================================================
+
+// Inisialisasi API Gemini
+const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+
+async function runBot() {
+  // 1. Launch Browser (headless: false biar lu bisa mantau browsernya jalan)
+  const browser = await chromium.launch({ headless: false });
+  let context;
+
+  // 2. CEK COOKIES / SESSION JSON
+  if (fs.existsSync(SESSION_FILE)) {
+    console.log(`📦 Menemukan session lama untuk [${AKUN_SEKARANG}]. Membuka browser langsung login...`);
+    // Load session JSON yang udah kesimpen
+    context = await browser.newContext({ storageState: SESSION_FILE });
+  } else {
+    console.log(`❌ Session untuk [${AKUN_SEKARANG}] tidak ditemukan. Lo harus login manual dulu!`);
+    context = await browser.newContext();
+  }
+
+  const page = await context.newPage();
+
+  // 3. LOGIKA JALUR LOGIN ATAU LANGSUNG GAS
+  await page.goto('https://www.facebook.com/');
+
+  // Cek apakah ada tombol login atau form input email. Kalo ada, berarti belum login
+  const isNeedLogin = await page.locator('input[name="email"]').isVisible().catch(() => false);
+
+  if (isNeedLogin) {
+    console.log("⚠️ Browser mendeteksi kamu belum login. Silahkan LOGIN MANUAL sekarang di browser yang kebuka!");
+    console.log("⏳ Menunggu kamu beresin login... (Diberi waktu 60 detik)");
     
-    Rules you MUST follow:
-    - Always greet the user by their first name at the start of your reply (e.g. "Hey Sarah!" or "Hi Mark!")
-    - Keep replies to 2-3 sentences maximum
-    - Sound natural and human — never robotic or stiff
-    - Use 1-2 relevant emojis per reply
-    - If someone asks a question you can't answer, say: "Great question! Slide into our DMs and we'll help you out 😊"
-    - If someone says hi/hello/hey, greet them back warmly and ask how you can help
-    - If someone complains, be empathetic and offer to resolve it via DM
-    - Never say you are an AI or a bot`,
-};
+    // Bot bakal nunggu lo ngetik email + pass + OTP (kalau ada) sampai masuk beranda
+    await page.waitForURL('**/facebook.com/**', { timeout: 60000 });
+    await page.waitForTimeout(5000); // Kasih jeda biar ke-load semua
 
-// ========================
-// WEBHOOK VERIFICATION
-// ========================
-app.get("/webhook", (req, res) => {
-  const mode      = req.query["hub.mode"];
-  const token     = req.query["hub.verify_token"];
-  const challenge = req.query["hub.challenge"];
-
-  if (mode === "subscribe" && token === CONFIG.VERIFY_TOKEN) {
-    console.log("✅ Webhook verified!");
-    return res.status(200).send(challenge);
-  }
-  console.log("❌ Webhook verification failed");
-  res.sendStatus(403);
-});
-
-// ========================
-// RECEIVE COMMENTS
-// ========================
-app.post("/webhook", async (req, res) => {
-  const body = req.body;
-  if (body.object !== "page") return res.sendStatus(404);
-
-  for (const entry of body.entry) {
-    for (const change of entry.changes) {
-
-      // Only handle new comments on posts
-      if (change.field !== "feed") continue;
-      if (change.value.item !== "comment") continue;
-      if (change.value.verb !== "add") continue;
-
-      const data        = change.value;
-      const commentId   = data.comment_id;
-      const commentText = data.message || "";
-      const fullName    = data.from?.name || "friend";
-      const postId      = data.post_id;
-
-      // Use first name for natural greeting
-      const firstName = fullName.split(" ")[0];
-
-      console.log(`\n💬 New comment from ${fullName}: "${commentText}"`);
-
-      const reply = await generateAIReply(commentText, firstName, postId);
-      await postReply(commentId, reply);
-    }
+    // Simpan session baru ke file JSON setelah lo berhasil login
+    const storage = await context.storageState();
+    fs.writeFileSync(SESSION_FILE, JSON.stringify(storage, null, 2));
+    console.log(`✅ Session baru berhasil disimpan ke: ${SESSION_FILE}`);
+    console.log("🔄 Jalankan ulang script ini buat mulai nyari target otomatis!");
+    await browser.close();
+    return;
   }
 
-  res.sendStatus(200);
-});
+  console.log("🔥 Login Valid! Langsung gass cari target...");
 
-// ========================
-// AI REPLY GENERATOR
-// ========================
-async function generateAIReply(commentText, firstName, postId) {
+  // 4. CARI POSTINGAN GLOBAL BERDASARKAN KEYWORD
+  console.log(`🔍 Nembak pencarian keyword: "${KEYWORD_CARI}"`);
+  const searchUrl = `https://www.facebook.com/search/posts/?q=${encodeURIComponent(KEYWORD_CARI)}&filters=eyJyZWNlbnRfcG9zdHM6MCI6IntcIm5hbWVcIjpcInJlY2VudF9wb3N0c1wiLFwiYXJndXNcIjpcIlwifSJ9`;
+  await page.goto(searchUrl);
+  await page.waitForTimeout(5000); // Tunggu loading feed pencarian
+
+  // 5. AMBIL TEKS POSTINGAN (Selector kasarnya, FB sering update strukturnya)
+  // Ini mengambil text dari postingan pertama yang muncul di feed pencarian
+  const postSelector = 'div[role="feed"] [dir="auto"]';
+  const postText = await page.locator(postSelector).first().innerText().catch(() => null);
+
+  if (!postText || postText.length < 10) {
+    console.log("❌ Gagal nyecan teks postingan. Cari keyword lain atau cek selector.");
+    await browser.close();
+    return;
+  }
+
+  console.log(`📝 Teks Postingan Target: "${postText.substring(0, 80)}..."`);
+
+  // 6. LEMPAR KE OTAK GEMINI (Biar mikir gaya bahasa & kelayakan post)
+  console.log("🧠 Meminta Gemini menganalisis konteks...");
   try {
-    // Try to get the original post text for better context
-    let postContent = "";
-    try {
-      const postRes = await axios.get(
-        `https://graph.facebook.com/v19.0/${postId}`,
-        { params: { fields: "message", access_token: CONFIG.PAGE_ACCESS_TOKEN } }
-      );
-      postContent = postRes.data?.message || "";
-    } catch (_) {
-      // Not critical if this fails
-    }
+    const aiResponse = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: `
+        Analisis teks postingan Facebook ini: "${postText}"
+        
+        Tugas Anda:
+        1. Cek apakah orang ini BENAR-BENAR sedang butuh/ingin membeli suatu barang? (Jawab YA atau TIDAK)
+        2. Jika YA, buatkan 1 kalimat balasan kasual ala Gen Z Jaksel atau Indonesia santai yang menawarkan produk, singkat, padat, dan natural (Jangan kaku!).
+        
+        Format output WAJIB JSON murni seperti ini:
+        {
+          "cocok": true,
+          "balasan": "Ada nih kak, coba lirik dulu link ini kali aja sreg"
+        }
+      `,
+      config: { responseMimeType: "application/json" }
+    });
 
-    const contextLine = postContent
-      ? `The Facebook post context: "${postContent}"\n\n`
-      : "";
+    const result = JSON.parse(aiResponse.text);
 
-    const userPrompt =
-      `${contextLine}` +
-      `A Facebook user named ${firstName} just commented on our page post.\n` +
-      `Their comment: "${commentText}"\n\n` +
-      `Write a reply that greets ${firstName} by name and responds helpfully to their comment.`;
-
-    const response = await axios.post(
-      "https://api.anthropic.com/v1/messages",
-      {
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 150,
-        system: CONFIG.BOT_PERSONA,
-        messages: [{ role: "user", content: userPrompt }],
-      },
-      {
-        headers: {
-          "x-api-key":          CONFIG.ANTHROPIC_API_KEY,
-          "anthropic-version":  "2023-06-01",
-          "Content-Type":       "application/json",
-        },
+    if (result.cocok) {
+      console.log(`🎯 Match! Gemini bikin teks: "${result.balasan}"`);
+      const teksKomenFinal = `${result.balasan} 🔗 ${LINK_AFFILIATE}`;
+      
+      console.log(`🚀 Siap ngetik komen: [${teksKomenFinal}]`);
+      
+      // 7. LOGIKA EKSEKUSI NYEKRIPT TOMBOL KOMEN FB
+      // Cari tombol "Comment" / "Komentar" di feed tersebut
+      const btnKomentar = page.locator('text="Komentar"').first(); // Atau text="Comment" tergantung bahasa FB-mu
+      if (await btnKomentar.isVisible()) {
+        await btnKomentar.click();
+        await page.waitForTimeout(2000);
+        
+        // Cari kolom input tempat ngetik
+        const kolomNgetik = page.locator('div[role="textbox"]').first();
+        await kolomNgetik.fill(teksKomenFinal);
+        await page.waitForTimeout(1000);
+        await page.keyboard.press('Enter');
+        
+        console.log("✅ Auto-comment Berhasil Ditempel!");
+      } else {
+        console.log("❌ Tombol komentar gak ketemu/dikunci.");
       }
-    );
 
-    const reply = response.data.content?.[0]?.text?.trim();
-    console.log(`🤖 AI reply: ${reply}`);
-    return reply || fallbackReply(firstName);
+    } else {
+      console.log("⏭️ Kata Gemini postingannya ga cocok (bukan mau beli barang), SKIP!");
+    }
 
   } catch (err) {
-    console.error("❌ Claude API error:", err.response?.data || err.message);
-    return fallbackReply(firstName);
+    console.error("❌ Error saat olah data Gemini/Komen:", err.message);
   }
+
+  // Selesai, tutup browser
+  await page.waitForTimeout(5000);
+  await browser.close();
+  console.log("🏁 Proses selesai.");
 }
 
-// ========================
-// FALLBACK (if AI fails)
-// ========================
-function fallbackReply(firstName) {
-  const replies = [
-    `Hey ${firstName}! Thanks so much for your comment 😊 We'll get back to you shortly!`,
-    `Hi ${firstName}! We appreciate you reaching out 🙏 Someone from our team will follow up soon!`,
-    `Hey ${firstName}! Thanks for engaging with us 😄 We'll be in touch!`,
-  ];
-  return replies[Math.floor(Math.random() * replies.length)];
-}
-
-// ========================
-// POST REPLY TO FACEBOOK
-// ========================
-async function postReply(commentId, message) {
-  try {
-    const res = await axios.post(
-      `https://graph.facebook.com/v19.0/${commentId}/comments`,
-      { message, access_token: CONFIG.PAGE_ACCESS_TOKEN }
-    );
-    console.log(`✅ Reply posted! ID: ${res.data.id}`);
-  } catch (err) {
-    console.error("❌ Failed to post reply:", err.response?.data || err.message);
-  }
-}
-
-// ========================
-// HEALTH CHECK (Render)
-// ========================
-app.get("/", (_req, res) => {
-  res.send("🤖 FB AI Comment Bot is running!");
-});
-
-// ========================
-// START SERVER
-// ========================
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`🚀 Bot is live on port ${PORT}`);
-});
+runBot();
