@@ -50,9 +50,7 @@ function isOwner(msg) {
     return msg.chat.id.toString() === CONFIG.OWNER_CHAT_ID.toString();
 }
 
-// =========================================================================
-// TELEGRAM BOT ROUTER (COMMAND HANDLER)
-// =========================================================================
+
 
 // 1. Command /add <link> <keyword>
 bot.onText(/\/add (.+) (.+)/, async (msg, match) => {
