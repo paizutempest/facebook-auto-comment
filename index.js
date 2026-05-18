@@ -13,7 +13,7 @@ chromium.use(stealth());
 const CONFIG = {
     GEMINI_API_KEY: "TARUH_API_KEY_GEMINI_LO_DI_SINI",
     TELEGRAM_TOKEN: "TARUH_TOKEN_BOT_TELEGRAM_LO_DI_SINI",
-    OWNER_CHAT_ID: "TARUH_CHAT_ID_TELEGRAM_LO_DI_SINI", // Hanya ID ini yang bisa eksekusi bot
+    OWNER_CHAT_ID: "TARUH_CHAT_ID_TELEGRAM_LO_DI_SINI", 
     DEFAULT_ACCOUNT: "akun_tumbal_1"
 };
 
