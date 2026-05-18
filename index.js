@@ -9,9 +9,7 @@ import path from "path";
 
 chromium.use(stealth());
 
-// =========================================================================
-// CONFIGURATION (Sesuaikan Data Anda di Sini)
-// =========================================================================
+
 const CONFIG = {
     GEMINI_API_KEY: "TARUH_API_KEY_GEMINI_LO_DI_SINI",
     TELEGRAM_TOKEN: "TARUH_TOKEN_BOT_TELEGRAM_LO_DI_SINI",
